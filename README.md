@@ -151,9 +151,204 @@ app.listen(port, () => {console.log(`Server is running on port ${port}`);})
 ---
 ---
 
+## `PUSHER`
 
 
+`npm i pusher`
+
+1. go  to the Pusher.com
+2. register your account
+3. click on `Channel`
+4. add project name
+5. select `eu(Europe)`
+6. select front end language
+7. select backend language
 
 
+* it will give us all the codes automatically, specially for the backend.
+* we will also be using MongoDB change stream with Pusher.
+* the change stream will trigger the pusher and it's going to upload the message to the pusher.
 
 
+###### `using pusher isn't a best practice`
+because you will have to press the refresh button every time, or auto refreshing after every 5 or 10 seconds.
+so it's not a best tool.
+
+```js
+// /backend/server.js
+//......
+import Messages from './dbModel.js';
+import Pusher from 'pusher';
+
+// app config
+const app = Express();
+const port = process.env.PORT || 9000;
+
+const pusher = new Pusher({
+    appId: "1278499",
+    key: "5656d95bb85395c320d8",
+    secret: "650171a972c2d809b964",
+    cluster: "eu",
+    useTLS: true
+  });
+// middleWares
+//......
+```
+
+Now we are going to add the `MongoDB change stream`.
+
+change stream is going to watch our database, and if there is a change it will trigger `Pusher`.
+
+* in mongoDB the data collection name is in lower case so change the collection name in the dbModel. and as we are exporting it as a default so we don't have to change the other mongoose functions.
+
+```js
+// dbModel.js
+import mongoose from 'mongoose';
+
+const whatsappSchema = new mongoose.Schema({
+    message: String,
+    name: String,
+    timestamp: String,
+    received: Boolean
+});
+
+
+export default mongoose.model('messages',  whatsappSchema);
+```
+
+```js
+// /server.js
+mongoose.connect(connection_url,
+        async(err) => {
+            if(err) throw err;
+            console.log("DB connected");
+        }
+    )
+
+const db = mongoose.connection;
+
+db.once('open', () => {
+    console.log("DB connected to the app");
+    const msgCollection = db.collection('messages');    // 'messages' is our collection in the dbModel, but here it's in the lower case because in the mongo db it's going to be in lower case.
+    const changeStream = msgCollection.watch();
+
+    // fire change stream is something is
+    changeStream.on('change', (change) => {
+        console.log(change);
+    })
+})
+```
+
+now go to the PostMan, and send a new message. `console.log(change)` will show the message in the console and in the terminal.
+
+```js
+// /backend/server.js
+db.once('open', () => {
+    console.log("DB connected to the app");
+    const msgCollection = db.collection('messages');    // 'messages' is our collection in the dbModel, but here it's in the lower case because in the mongo db it's going to be in lower case.
+    const changeStream = msgCollection.watch();
+
+    // fire change stream is something is
+    changeStream.on('change', (change) => {
+        // console.log(change);
+        if(change.operationType === 'insert') {
+            const messageDetails = change.fullDocument;
+            pusher.trigger('messages', 'inserted', {
+                name: messageDetails.name,
+                message: messageDetails.message,
+            });
+        }else{
+            console.log("Error triggering in Pusher ");
+        }
+    });
+});
+```
+
+---
+---
+
+```js
+// /backend/server.js
+import Express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import Messages from './dbModel.js';
+import Pusher from 'pusher';
+
+// app config
+const app = Express();
+const port = process.env.PORT || 9000;
+
+const pusher = new Pusher({
+    appId: "1278499",
+    key: "5656d95bb85395c320d8",
+    secret: "650171a972c2d809b964",
+    cluster: "eu",
+    useTLS: true
+  });
+// middleWares
+app.use(cors());
+app.use(Express.json());
+
+// DB config
+const connection_url = "mongodb+srv://admin:eH2KDdLDaLTWepRq@cluster0.clfef.mongodb.net/myFirstDatabase?retryWrites=true&w=majority";
+
+mongoose.connect(connection_url,
+        async(err) => {
+            if(err) throw err;
+            console.log("DB connected");
+        }
+    )
+
+const db = mongoose.connection;
+
+db.once('open', () => {
+    console.log("DB connected to the app");
+    const msgCollection = db.collection('messages');    // 'messages' is our collection in the dbModel, but here it's in the lower case because in the mongo db it's going to be in lower case.
+    const changeStream = msgCollection.watch();
+
+    // fire change stream is something is
+    changeStream.on('change', (change) => {
+        // console.log(change);
+        if(change.operationType === 'insert') {
+            const messageDetails = change.fullDocument;
+            pusher.trigger('messages', 'inserted', {
+                name: messageDetails.name,
+                message: messageDetails.message,
+            });
+        }else{
+            console.log("Error triggering in Pusher ");
+        }
+    });
+});
+
+// entry points
+app.get('/', (req, res) => {res.status(200).send('Hello World');});
+
+app.post('/messages/new/', (req, res) => {
+    const dbMessage = req.body;
+
+    Messages.create(dbMessage, (err, data) => {
+        if(err){
+            res.status(500).send(err);
+        }else{
+            res.status(201).send(data);
+        }
+    })
+})
+
+app.get('/messages/sync', (req, res) => {
+    Messages.find({}, (err, data) => {
+        if(err){
+            res.status(500).send(err);
+        }else{
+            res.status(200).send(data);
+        }
+    })
+}
+)
+
+
+// listener
+app.listen(port, () => {console.log(`Server is running on port ${port}`);})
+```
